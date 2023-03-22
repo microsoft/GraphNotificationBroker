@@ -1,0 +1,25 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet",
+    "AzureSignalRConnectionString": "",
+    "APPINSIGHTS_INSTRUMENTATIONKEY": "",
+    "AppSettings:TenantId": "common",
+    "AppSettings:NotificationUrl": "EventHub:https://<keyVaultName>.vault.azure.net/secrets/<keyVaultSecretName>?tenantId=<domain>.onmicrosoft.com", // or if using WebHooks "https://<yourdomain>/api/notify",
+    "AppSettings:ClientSecret": "",
+    "AppSettings:ClientId": "",
+    "AppSettings:KeyVaultUrl": "https://<keyVaultName>.vault.azure.net",
+    "AppSettings:CertificateName": "",
+    "AppSettings:SubscriptionExpirationTime" : 60,
+    "AppSettings:EventHubListenConnectionString": "Endpoint=sb://<eventHubNamespace>.servicebus.windows.net/;SharedAccessKeyName=<listenPolicyName>;SharedAccessKey=<key>;EntityPath=<eventHubName>",
+    "AppSettings:EventHubName": "",
+    "AppSettings:UseClientSecretAuth" : false,
+    "AppSettings:UseEventHub" : true
+  },
+  "Host": {
+    "LocalHttpPort": 7071,
+    "CORS": "http://localhost:8080",
+    "CORSCredentials": true
+  }
+}

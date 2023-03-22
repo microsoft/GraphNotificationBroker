@@ -1,0 +1,844 @@
+<!-- Copyright (c) Microsoft Corporation.
+     Licensed under the MIT License. -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no">
+  <title>Azure Functions Graph Tutorial Test Client</title>
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.0-beta1/dist/css/bootstrap.min.css"
+        integrity="sha384-0evHe/X+R7YkIZDRvuzKMRqM+OrBnVFBL6DOitfPri4tjfHxaWutUpFmBp4vmVor"
+        crossorigin="anonymous">
+  <style>
+  body {
+    padding-top: 70px;
+  }
+
+  .notificationData {
+    max-width: 100px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  fieldset {
+    margin: 8px;
+    border: 1px solid silver;
+    padding: 8px;    
+    border-radius: 4px;
+  }
+
+  legend {
+      padding: 2px;    
+  }
+  </style>
+</head>
+
+<body>
+  <nav class="navbar navbar-expand-md navbar-dark fixed-top bg-dark">
+    <div class="container">
+      <a href="/" class="navbar-brand">Azure Functions Graph Test Client</a>
+
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse"
+        aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navbarCollapse">
+          <ul id="authenticated-nav" class="navbar-nav me-auto flex-grow-1"></ul>
+          <ul class="navbar-nav">
+            <li id="account-nav" class="nav-item"></li>
+          </ul>
+      </div>
+    </div>
+  </nav>
+
+  <main id="main-container" role="main" class="container">
+
+  </main>
+  <br />
+  <div id="notificationsContainer" class="container">
+    <div id="notificationsHeader"></div>
+    <div id="notifications"></div>
+  </div>
+
+  <!-- Modal -->
+  <div class="modal fade" id="exampleModalCenter" tabindex="-1" role="dialog" aria-labelledby="exampleModalCenterTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="exampleModalLongTitle">Notification Data</h5>
+          <button type="button" class="close" onclick="closeModal()" data-dismiss="modal" aria-label="Close">
+            <span aria-hidden="true">&times;</span>
+          </button>
+        </div>
+        <div class="modal-body">
+          <h2>Notification JSON</h2>
+          <div id="modal-notification-data" style="word-break: break-word;"></div>
+          <h2>Encrypted Data JSON</h2>
+          <div id="modal-encrypted-data" style="word-break: break-word;"></div>
+        </div>
+        <div class="modal-footer">
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="modal-backdrop fade show" id="backdrop"  style="display: none;"></div>
+  <!-- Bootstrap -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.0-beta1/dist/js/bootstrap.bundle.min.js"
+    integrity="sha384-pprn3073KE6tl6bjs2QrFaJGz5/SUsLqktiwsUTF55Jfv3qYSDhgCecCxMW52nD2"
+    crossorigin="anonymous"></script>
+
+  <!-- MSAL -->
+  <script type="text/javascript"
+          src="https://alcdn.msauth.net/browser/2.3.0/js/msal-browser.min.js"
+          integrity="sha384-o+Sncs5XJ3NEAeriM/FV8YGZrh7mZk4GfNutRTbYjsDNJxb7caCLeqiDabistgwW"
+          crossorigin="anonymous"></script>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/6.0.1/signalr.js"></script>
+
+  <script>
+    
+    const signalRMethodCreateSubscription = "CreateSubscription";
+    const subscriptionsSessionStorageKey = "graph-subscriptions";
+    const oneSecondInMs = 1000;
+    const oneMinuteInMs = 60 * oneSecondInMs;
+    var renewalInterval = -1;
+
+    //section Config.js
+    const appsettings = {
+      clientId: '__FRONTEND_CLIENT_ID__',
+      authority: 'https://login.microsoftonline.com/common',
+      scopes: [ '__BACKEND_CLIENT_ID__/.default' ],
+      renewalThreshold : 60,    //The number of seconds before subscription expires it will be renewed 
+      timerInterval : 1,        //The number of seconds the timer will check on expiration
+      subscriptionExpiration : 5,  //The default time in minutes for subscription expires
+      functionHost: '__FUNCTION_APP_HOST__',
+      graphResourceDefault : 'chats/<chatId>/messages' // example
+    }; 
+
+    const ReturnMethods = {
+      Connected: 'Connected',
+      NewMessage: 'NewMessage',
+      SubscriptionCreated : 'SubscriptionCreated',
+      SubscriptionCreationFailed : 'SubscriptionCreationFailed'
+    };
+
+    const msalRequest = {
+      scopes: appsettings.scopes
+    }
+
+    const msalClient = new msal.PublicClientApplication({
+      auth: {
+        clientId: appsettings.clientId,
+        authority: appsettings.authority
+      }
+    });
+
+    let connection;
+
+    startRenewalTimer = () => {
+        // start the renewal timer to check every minute
+        renewalInterval = setInterval(this.renewalTimer, oneMinuteInMs, {});
+        console.log(`Start renewal timer. Id: ${renewalInterval}`);
+    };
+
+    renewalTimer = async () => {
+        console.log("Subscription renewal timer tick");
+        // get subscriptions from session storage
+        const subscriptions = JSON.parse(sessionStorage.getItem(subscriptionsSessionStorageKey));
+
+        // ensure subscriptions exist
+        if (!subscriptions) {
+            console.log(`No subscriptions found in session state. Stop renewal timer ${renewalInterval}.`);
+            clearInterval(renewalInterval);
+            return;
+        }
+
+        // loop through and process subscriptions
+        for (const subscription of subscriptions) {
+            // get seconds away from subscription expiring
+            // Dates are in UTC
+            const expirationTime = new Date(subscription.ExpirationTime);
+            // create a new date now in UTC
+            const now = new Date(new Date().toISOString());
+            
+            // get difference in seconds
+            var diff = Math.round((expirationTime.getTime() - now.getTime()) / oneSecondInMs);
+
+            // renew subscription if expiration within 60 seconds
+            if (diff <= 60)
+            {
+              console.log(`Refreshing Subscription for ${subscription.Resource}.`);
+              const gnbToken = await getToken();
+              subscription.ExpirationTime = getSubscriptionExpirationTime();
+              await connection.send(signalRMethodCreateSubscription, subscription, gnbToken);
+            }
+        }
+    }
+
+    // Subscribe to notifications
+    async function SubscribeToGraph(subscriptionDefinition) {
+      resetUI(true);
+
+      const token = await getToken();
+      if (!token) {
+          await updatePage(Views.error, {
+            message: 'Could not retrieve token for user'
+          });
+          return;
+      }
+
+      await connection.send(signalRMethodCreateSubscription, subscriptionDefinition, token);
+      console.log('Invoked CreateSubscription');
+    }
+
+    // Notifications that have resource data are encrypted
+    // This is a separate call to decrypt the data becuase
+    // When Graph Socket Notifications are supported, the notifications will be encrypted
+    GetChatMessageFromNotification = async (notification) => {
+      const token = await getToken();
+      if (!token) {
+        await updatePage(Views.error, {
+          message: 'Could not retrieve token for user'
+        });
+        return;
+      }
+
+      const response = await fetch(appsettings.functionHost + '/api/GetChatMessageFromNotification', {
+          method: 'POST',
+          headers: {
+              Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify(notification.encryptedContent)
+      });
+
+      if (response.ok) {
+        return await response.json();
+      }
+    }
+
+    // Create the expiration time in UTC
+    // This will take the setting of how long you want the subscription to last for, ie 5 minutes
+    // And add 5 minutes to the current time (new Date()), then convert that to UTC
+    getSubscriptionExpirationTime = () => {
+        // Get the UTC now date
+        let expirationDate = new Date();
+        // Add Subscription Duration to time in ms
+        expirationDate.setTime(expirationDate.getTime() + (appsettings.subscriptionExpiration * oneMinuteInMs));
+        const time = expirationDate.toISOString();
+        console.log("Expiration Time: " + time);
+        return time;
+    };
+
+    processSubscription = (subscription) => {
+      // get all subscriptions from session storage
+      const sessionSubscriptions = JSON.parse(sessionStorage.getItem(subscriptionsSessionStorageKey));
+
+      // find if the new / updated subscription already exists in the session storage
+      const existingSubscriptionIndex = sessionSubscriptions.findIndex((sub) => sub.Resource == subscription.Resource);
+
+      if (existingSubscriptionIndex !== -1) {
+          // if it exists, overwrite it.
+          sessionSubscriptions[existingSubscriptionIndex] = subscription;
+      } else {
+          // if it doesn't exist, add it to then end of the array
+          sessionSubscriptions.push(subscription);
+      }
+
+      // save the subscriptions in session storage
+      sessionStorage.setItem(subscriptionsSessionStorageKey, JSON.stringify(sessionSubscriptions));
+
+      showSubscriptions();
+  
+      // only start timer once
+      if (renewalInterval == -1)
+          this.startRenewalTimer();
+    }
+
+    //Section: Setting up the client
+    createSubscriptionWithSignalR = async (graphResource, includeResourceData, expirationMinutes, changeTypes) => {
+
+      if(!connection) {
+        //not signalR connection
+        console.log("No signalR connection present.");
+        return new Error("No Signal Connection available.");
+      }
+
+      // Build the JSON payload for the subscribe request
+      const subscriptionDefinition = {
+        resource: graphResource,
+        expirationTime: getSubscriptionExpirationTime(),
+        changeTypes: changeTypes,
+        resourceData: includeResourceData
+      };
+
+      try {
+          await SubscribeToGraph(subscriptionDefinition);
+      } catch (err) {
+          console.error(err);
+      }
+    }
+
+    createSignalRConnection = async () => {
+      connection = new signalR.HubConnectionBuilder()
+          .withUrl(appsettings.functionHost + '/api', {
+            accessTokenFactory: async () => await getToken()
+          })
+          .withAutomaticReconnect()
+          .configureLogging(signalR.LogLevel.Information)
+          .build();
+
+      // handle reconnects
+      connection.onreconnected(connectionId => {
+        console.log(`Reconnected. ConnectionId: ${this.connection.connectionId}`);
+        // TODO: reconnect
+      });
+
+      connection.on(ReturnMethods.NewMessage, async (notification) => {
+          console.log('recevied new message');
+          var encryptedContent = '';
+          if (notification.encryptedContent) {
+            encryptedContent = await GetChatMessageFromNotification(notification);
+          }
+          await updatePage(Views.notifications, {notification: notification, encryptedContent: encryptedContent});
+      });
+
+      connection.on(ReturnMethods.SubscriptionCreated, async (subscriptionRecord) => {
+        console.log('Subscription created');
+        processSubscription(subscriptionRecord);
+        notificationsHeader.innerHTML = '';
+        resetUI(false);
+      });
+
+      connection.on(ReturnMethods.SubscriptionCreationFailed, async (subscriptionDefinition)=> {
+        // Something failed when creation the subscription.
+        console.error('Creation of subscription failed.');
+      });
+
+      connection.on(ReturnMethods.Connected, async (connectionId)=> {
+        //Something failed when creation the subscription.
+        console.log('Connected to SignalR');
+      });
+
+      // start the connection
+      await connection.start();
+
+      sessionStorage.setItem(subscriptionsSessionStorageKey, JSON.stringify([]));
+
+      // if a refresh happens and we still have valid subscriptions, you will need to
+      // subscribe again in order for the backend to know the new connection Id.
+      // for this sample, we are not implementing that logic.
+      // const subscriptions = JSON.parse(sessionStorage.getItem(subscriptionsSessionStorageKey));
+
+      // // ensure subscriptions exist
+      // if (!subscriptions) {
+      //   sessionStorage.setItem(subscriptionsSessionStorageKey, JSON.stringify([]));
+      // } else {
+      //   // resubscribe
+      // }
+    }
+
+    //subscribe to resource
+    subscribe = () => {
+      const graphResource = document.getElementById('subscribe-resource').value;
+      const includeResourceData = document.getElementById('subscribe-include-resource-data').checked;
+      const expirationTime = document.getElementById('subscribe-expirationtime').value;
+
+      let changeTypes = [];
+      if(document.getElementById('subscribe-include-created').checked)
+        changeTypes.push('created');
+      if(document.getElementById('subscribe-include-deleted').checked)
+        changeTypes.push('deleted');
+      if(document.getElementById('subscribe-include-updated').checked)
+        changeTypes.push('updated');
+
+      if (!graphResource) {
+        updatePage(Views.error, {
+          message: 'Please provide a resource to subscribe to.'
+        });
+        return;
+      }
+      createSubscriptionWithSignalR(graphResource, includeResourceData, expirationTime, changeTypes);
+    }
+    
+
+
+
+
+
+
+    <!-- Front End Code -->
+    openModal = () => {
+          document.getElementById("backdrop").style.display = "block"
+          document.getElementById("exampleModalCenter").style.display = "block"
+          document.getElementById("exampleModalCenter").classList.add("show")
+      }
+      closeModal = () => {
+          document.getElementById("backdrop").style.display = "none"
+          document.getElementById("exampleModalCenter").style.display = "none"
+          document.getElementById("exampleModalCenter").classList.remove("show")
+      }
+
+      // Get the modal
+      var modal = document.getElementById('exampleModalCenter');
+      
+      // When the user clicks anywhere outside of the modal, close it
+      window.onclick = function(event) {
+        if (event.target == modal) {
+          closeModal()
+        }
+      }
+
+      window.onkeydown = (event) => {
+        const modalIsOpen = document.getElementById("exampleModalCenter").classList.contains('show');
+        if (modalIsOpen && event.key == "Escape") {
+          closeModal()
+        }
+      }
+
+      // Select DOM elements to work with
+      const authenticatedNav = document.getElementById('authenticated-nav');
+      const accountNav = document.getElementById('account-nav');
+      const mainContainer = document.getElementById('main-container');
+      const notificationsHeader = document.getElementById('notificationsHeader');
+      const notifications = document.getElementById('notifications');
+      var messageIdx = 0;
+
+      const Views = { error: 1, home: 2, notifications: 3, subscriptions: 4 };
+
+      // Helper function to create an element, set class, and add text
+      createElement = (type, className, text, id) => {
+        const element = document.createElement(type);
+        element.className = className;
+
+        if (text) {
+          const textNode = document.createTextNode(text);
+          element.appendChild(textNode);
+        }
+
+        if (id) {
+          element.id = id;
+        }
+
+        return element;
+      }
+
+      // Show the navigation items that should only show if
+      // the user is signed in
+      showAuthenticatedNav = (user, view) => {
+        authenticatedNav.innerHTML = '';
+
+        if (user) {
+          // Add subscriptions link
+          const subscriptionNav = createElement('li', 'nav-item');
+
+          const subscriptionLink = createElement('button',
+            `btn btn-link nav-link${view === Views.message ? ' active' : '' }`,
+            'Subscriptions');
+          subscriptionLink.setAttribute('onclick', `updatePage(${Views.subscriptions});`);
+          subscriptionNav.appendChild(subscriptionLink);
+          authenticatedNav.appendChild(subscriptionNav);
+        }
+      }
+
+      // Show the sign in button or the dropdown to sign-out
+      showAccountNav = (user) => {
+        accountNav.innerHTML = '';
+
+        if (user) {
+          // Show the "signed-in" nav
+          accountNav.className = 'nav-item dropdown';
+
+          const dropdown = createElement('a', 'nav-link dropdown-toggle', user);
+          dropdown.setAttribute('data-bs-toggle', 'dropdown');
+          dropdown.setAttribute('role', 'button');
+          accountNav.appendChild(dropdown);
+
+          const userIcon = createElement('i',
+            'far fa-user-circle fa-lg rounded-circle align-self-center');
+          userIcon.style.width = '32px';
+          dropdown.appendChild(userIcon);
+
+          const menu = createElement('div', 'dropdown-menu dropdown-menu-end');
+          accountNav.appendChild(menu);
+
+          const userName = createElement('h5', 'dropdown-item-text mb-0', user);
+          menu.appendChild(userName);
+
+          const divider = createElement('div', 'dropdown-divider');
+          menu.appendChild(divider);
+
+          const signOutButton = createElement('button', 'dropdown-item', 'Sign out');
+          signOutButton.setAttribute('onclick', 'signOut();');
+          menu.appendChild(signOutButton);
+        } else {
+          // Show a "sign in" button
+          accountNav.className = 'nav-item';
+
+          const signInButton = createElement('button', 'btn btn-link nav-link', 'Sign in');
+          signInButton.setAttribute('onclick', 'signIn();');
+          accountNav.appendChild(signInButton);
+        }
+      }
+
+      getToken = async () => {
+        let account = sessionStorage.getItem('msal-userName');
+        if (!account){
+          throw new Error(
+            'User account missing from Browser Session Storage. Please sign out and sign in again.');
+        }
+
+        try {
+          console.log('Requesting access-token.');
+          // First, attempt to get the token silently
+          const silentRequest = {
+            scopes: msalRequest.scopes,
+            account: msalClient.getAccountByUsername(account)
+          };
+
+          const silentResult = await msalClient.acquireTokenSilent(silentRequest);
+          return silentResult.accessToken;
+        } catch (silentError) {
+          // If silent requests fails with InteractionRequiredAuthError,
+          // attempt to get the token interactively
+          if (silentError instanceof msal.InteractionRequiredAuthError) {
+            const interactiveResult = await msalClient.acquireTokenPopup(msalRequest);
+            return interactiveResult.accessToken;
+          } else {
+            throw silentError;
+          }
+        }
+      }
+
+      //Section: Code for signing in and accesstoken retrieval
+      signIn = async () => {
+        // Login
+        try { 
+          // Use MSAL to login
+          const authResult = await msalClient.loginPopup(msalRequest);
+          // Save the account username, needed for token acquisition
+          sessionStorage.setItem('msal-userName', authResult.account.username);
+          // Refresh home page
+          updatePage(Views.home);
+        } catch (error) {
+          console.log(error);
+          updatePage(Views.error, {
+            message: 'Error logging in',
+            debug: error
+          });
+        }
+      }
+
+      signOut = () => {
+        account = null;
+        sessionStorage.removeItem('msal-userName');
+        msalClient.logout();
+      }
+      
+      // Renders the home view
+      showWelcomeMessage = (user) => {
+        // Create jumbotron
+        const jumbotron = createElement('div', 'p-5 mb-4 bg-light rounded-5')
+
+        const jumbotronContainer = createElement('div', 'container-fluid py-5');
+        jumbotron.appendChild(jumbotronContainer);
+
+        const heading = createElement('h1', null, 'Azure Functions Graph Tutorial Test Client');
+        jumbotronContainer.appendChild(heading);
+
+        const lead = createElement('p', 'lead',
+          'This sample app is used to test the Azure Functions in the Azure Functions Graph Tutorial');
+          jumbotronContainer.appendChild(lead);
+
+        if (user) {
+          // Welcome the user by name
+          const welcomeMessage = createElement('h4', null, `Welcome ${user}!`);
+          jumbotronContainer.appendChild(welcomeMessage);
+
+          const callToAction = createElement('p', null,
+            'Use the navigation bar at the top of the page to get started.');
+            jumbotronContainer.appendChild(callToAction);
+        } else {
+          // Show a sign in button in the jumbotron
+          const signInButton = createElement('button', 'btn btn-primary btn-large',
+            'Click here to sign in');
+          signInButton.setAttribute('onclick', 'signIn();')
+          jumbotronContainer.appendChild(signInButton);
+        }
+
+        mainContainer.innerHTML = '';
+        mainContainer.appendChild(jumbotron);
+      }
+
+      showNotificationHeader = () => {
+        if(notificationsHeader.innerHTML != '')
+          return;
+
+        const card = createElement('div', 'card');
+
+        const cardBody = createElement('div', 'card-body');
+        card.appendChild(cardBody);
+
+        cardBody.appendChild(createElement('h2', 'card-title mb-4', 'Notifications'));
+
+        const notificationsTable = createElement('table', 'table', '', 'notifications-table');
+        cardBody.appendChild(notificationsTable);
+
+        const thead = createElement('thead', '');
+        notificationsTable.appendChild(thead);
+
+        const theadRow = createElement('tr', '');
+        thead.appendChild(theadRow);
+
+        theadRow.appendChild(createElement('th', ''));
+        theadRow.appendChild(createElement('th', '', 'Notification'));
+        theadRow.appendChild(createElement('th', '', 'Encrypted Data'));
+        theadRow.appendChild(createElement('th', '', 'Body'))
+
+        //notificationsHeader.innerHTML = '';
+        notificationsHeader.appendChild(card);
+      }
+
+      showNotificationInModal = (mesageId) => {
+        const row = document.getElementById(mesageId);
+        const dataRows = row.getElementsByClassName('notificationData')
+        var modalNotificationData = document.getElementById('modal-notification-data');
+        var modalEncryptedData = document.getElementById('modal-encrypted-data');
+        modalNotificationData.innerHTML = '';
+        modalEncryptedData.innerHTML = '';
+        modalNotificationData.innerHTML = dataRows[0].innerHTML;
+        modalEncryptedData.innerHTML = dataRows[1].innerHTML;
+        openModal();
+      }
+
+      // Renders notifications
+      showNotification = async (notification, encryptedContent) => {
+        if (!notification) {
+          const noNotification = createElement('h1', 'mt-3', 'No notifications to show');
+
+          notifications.innerHTML = '';
+          notifications.appendChild(noNotification);
+          return;
+        }
+
+        console.log(notification);
+        const notificationsTable = document.getElementById('notifications-table');
+        const messageId = 'message' + messageIdx;
+        const row = createElement('tr', '', '', messageId);
+        notificationsTable.appendChild(row);
+        messageIdx = messageIdx + 1;
+
+        const viewNotificationButtonCell = createElement('td', 'py-2');
+        row.appendChild(viewNotificationButtonCell);
+
+        const viewNotificationButton = createElement('button', 'btn btn-sm btn-outline-primary', 'View Raw Notification');
+        viewNotificationButton.setAttribute('onclick', `showNotificationInModal("${messageId}");`);
+        viewNotificationButtonCell.appendChild(viewNotificationButton);
+
+        row.appendChild(createElement('td', 'notificationData', JSON.stringify(notification)));
+        row.appendChild(createElement('td', 'notificationData', JSON.stringify(encryptedContent)));
+        if(encryptedContent != "")
+          row.appendChild(createElement('td', 'notificationData', JSON.stringify(encryptedContent.body.content)));
+      }
+
+      // Renders current subscriptions from the session, and allows the user
+      // to add new subscriptions
+      showSubscriptions = () => {
+        const subscriptions = JSON.parse(sessionStorage.getItem('graph-subscriptions'));
+
+        // Show new subscription form
+        const form = createElement('form', 'form-inline mb-3');
+
+        const fieldset = createElement('fieldset');
+
+        const graphResourceDiv = createElement('div','form-group');
+        const graphResourceLabel = createElement('label','form-label');
+        graphResourceLabel.innerHTML = 'Resource: ';
+        graphResourceLabel.setAttribute('for', 'subscribe-resource');
+        graphResourceDiv.appendChild(graphResourceLabel);
+        const graphResourceInput = createElement('input', 'form-control');
+        graphResourceInput.setAttribute('id', 'subscribe-resource');
+        graphResourceInput.setAttribute('type', 'text');
+        graphResourceInput.setAttribute('value', appsettings.graphResourceDefault);
+        graphResourceDiv.appendChild(graphResourceInput);
+        fieldset.appendChild(graphResourceDiv);
+
+        const subscriptionExpirationDiv = createElement('div','form-group');
+        const subscriptionExpirationLabel = createElement('label', 'form-label');
+        subscriptionExpirationLabel.innerHTML = 'Exporation Time (min): ';
+        subscriptionExpirationLabel.setAttribute('for','subscribe-expirationtime')
+        subscriptionExpirationDiv.appendChild(subscriptionExpirationLabel);
+        const subscriptionExpiration = createElement('input', 'form-control');
+        subscriptionExpiration.setAttribute('id', 'subscribe-expirationtime');
+        subscriptionExpiration.setAttribute('type', 'number');
+        subscriptionExpiration.setAttribute('size', '4');
+        subscriptionExpiration.setAttribute('value', appsettings.subscriptionExpiration);
+        subscriptionExpirationDiv.appendChild(subscriptionExpiration);
+        fieldset.appendChild(subscriptionExpirationDiv);
+
+        const includeResourceDataDiv = createElement('div','form-check form-switch')
+        const includeResourceData= createElement('input', 'form-check-input');
+        includeResourceData.setAttribute('id', 'subscribe-include-resource-data');
+        includeResourceData.setAttribute('type', 'checkbox');
+        includeResourceData.setAttribute('checked', 'true');
+        includeResourceDataDiv.appendChild(includeResourceData);
+        const includeResourceDataLabel = createElement('label', 'form-check-label');
+        includeResourceDataLabel.innerHTML = 'Include Data: ';
+        includeResourceDataDiv.appendChild(includeResourceDataLabel);
+        fieldset.appendChild(includeResourceDataDiv);
+
+        const includeCreatedDiv = createElement('div','form-check form-switch')
+        const includeCreated = createElement('input', 'form-check-input');
+        includeCreated.setAttribute('id', 'subscribe-include-created');
+        includeCreated.setAttribute('type', 'checkbox');
+        includeCreated.setAttribute('checked', 'true');
+        includeCreatedDiv.appendChild(includeCreated);
+        const includeCreatedLabel = createElement('label', 'form-check-label');
+        includeCreatedLabel.innerHTML = 'Created';
+        includeCreatedDiv.appendChild(includeCreatedLabel);
+        fieldset.appendChild(includeCreatedDiv);
+
+        const includeDeletedDiv = createElement('div','form-check form-switch')
+        const includeDeleted = createElement('input', 'form-check-input');
+        includeDeleted.setAttribute('id', 'subscribe-include-deleted');
+        includeDeleted.setAttribute('type', 'checkbox');
+        includeDeleted.setAttribute('checked', 'true');
+        includeDeletedDiv.appendChild(includeDeleted);
+        const includeDeletedLabel = createElement('label', 'form-check-label');
+        includeDeletedLabel.innerHTML = 'Deleted';
+        includeDeletedDiv.appendChild(includeDeletedLabel);
+        fieldset.appendChild(includeDeletedDiv);
+
+        const includeUpdatedDiv = createElement('div','form-check form-switch')
+        const includeUpdated = createElement('input', 'form-check-input');
+        includeUpdated.setAttribute('id', 'subscribe-include-updated');
+        includeUpdated.setAttribute('type', 'checkbox');
+        includeUpdated.setAttribute('checked', 'true');
+        includeUpdatedDiv.appendChild(includeUpdated);
+        const includeUpdatedLabel = createElement('label', 'form-check-label');
+        includeUpdatedLabel.innerHTML = 'Updated';
+        includeUpdatedDiv.appendChild(includeUpdatedLabel);
+        fieldset.appendChild(includeUpdatedDiv);
+        
+        form.appendChild(fieldset);
+
+        const subscribeButton = createElement('button', 'btn btn-primary mb-2', 'Subscribe');
+        subscribeButton.setAttribute('id', 'subscribeButton');
+        subscribeButton.setAttribute('type', 'button');
+        subscribeButton.setAttribute('onclick', 'subscribe();');
+
+        const card = createElement('div', 'card');
+
+        const cardBody = createElement('div', 'card-body');
+        card.appendChild(cardBody);
+
+        cardBody.appendChild(createElement('h2', 'card-title mb-4', 'Graph Subscriptions'));
+
+        const subscriptionTable = createElement('table', 'table');
+        cardBody.appendChild(subscriptionTable);
+
+        const thead = createElement('thead', '');
+        subscriptionTable.appendChild(thead);
+
+        const theadRow = createElement('tr', '');
+        thead.appendChild(theadRow);
+
+        theadRow.appendChild(createElement('th', '', 'Subscription ID'))
+        theadRow.appendChild(createElement('th', '', 'Resource'))
+        theadRow.appendChild(createElement('th', '', 'Expiration Time'))
+
+        if (subscriptions) {
+          // List subscriptions
+          for (const subscription of subscriptions) {
+            const row = createElement('tr', '');
+            subscriptionTable.appendChild(row);
+
+            row.appendChild(createElement('td', 'notificationData', subscription.SubscriptionId));
+            row.appendChild(createElement('td', 'notificationData', subscription.Resource));
+            row.appendChild(createElement('td', 'notificationData', subscription.ExpirationTime));
+          }
+        }
+
+        mainContainer.innerHTML = '';
+        mainContainer.appendChild(form);
+        mainContainer.appendChild(subscribeButton);
+        mainContainer.appendChild(card);
+      }
+
+      resetUI = (disabled) => {
+        const subscribeButton = document.getElementById('subscribeButton');
+
+        if(disabled)   {
+          if(subscribeButton)
+            subscribeButton.setAttribute('disabled','');
+        }
+        else {
+          showSubscriptions();
+          showNotificationHeader();
+          if(subscribeButton)
+            subscribeButton.removeAttribute('disabled');
+        }
+      }
+
+      // Renders an error
+      showError = (error) => {
+        const alert = createElement('div', 'alert alert-danger');
+
+        const message = createElement('p', 'mb-3', error.message);
+        alert.appendChild(message);
+
+        if (error.debug)
+        {
+          const pre = createElement('pre', 'alert-pre border bg-light p-2');
+          alert.appendChild(pre);
+
+          const code = createElement('code', 'text-break text-wrap',
+            JSON.stringify(error.debug, null, 2));
+          pre.appendChild(code);
+        }
+
+        mainContainer.innerHTML = '';
+        mainContainer.appendChild(alert);
+      }
+
+      // Re-renders the page with the selected view
+      updatePage = async (view, data) => {
+        if (!view) {
+          view = Views.home;
+        }
+
+        // Get the user name from the session
+        const user = sessionStorage.getItem('msal-userName');
+        if (!user && view !== Views.error)
+        {
+          view = Views.home;
+        }
+
+        showAccountNav(user);
+        showAuthenticatedNav(user, view);
+
+        switch (view) {
+          case Views.error:
+            showError(data);
+            break;
+          case Views.home:
+            if(sessionStorage.getItem('msal-userName') != null)
+              showWelcomeMessage(user);
+            await createSignalRConnection();
+            break;
+          case Views.notifications:
+            showNotification(data.notification, data.encryptedContent);
+            break;
+          case Views.subscriptions:
+            showSubscriptions();
+            showNotificationHeader();
+            break;
+        }
+      }
+
+      updatePage(Views.home);
+    </script>
+  </body>
+</html>

@@ -1,0 +1,23 @@
+{
+  "version": "2.0",
+  "logging": {
+    "fileLoggingMode": "never",
+    "logLevel": {
+      "default": "Warning",
+      "Host.Results": "Error",
+      "GraphNotifications.Functions": "Information",
+      "Host.Aggregator": "Error"
+    },
+    "applicationInsights": {
+      "samplingSettings": {
+          "isEnabled": true,
+          "excludedTypes": "Request"
+      }
+    }
+  },
+  "extensions": {
+    "http": { 
+      "routePrefix": ""
+      } 
+   }
+}

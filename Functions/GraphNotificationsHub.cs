@@ -199,16 +199,18 @@ namespace GraphNotifications.Functions
                     // Deserializing to ChangeNotificationCollection throws an error when the validation requests
                     // are sent. Using a JObject to get around this issue.
                     var notificationsObj = Newtonsoft.Json.Linq.JObject.Parse(messageBody);
-                    var notifications = notificationsObj["value"];
-                    if (notifications == null)
+                    var changeNotificationCollection = Newtonsoft.Json.JsonConvert.DeserializeObject<ChangeNotificationCollection>(messageBody);
+
+                    if (changeNotificationCollection?.Value == null)
                     {
                         _logger.LogWarning($"No notifications found");;
                         return;
                     }
 
-                    foreach (var notification in notifications)
+                    foreach (var notification in changeNotificationCollection.Value)
                     {
-                        var subscriptionId = notification["subscriptionId"]?.ToString();
+
+                        var subscriptionId = notification.SubscriptionId.ToString();
                         if (string.IsNullOrEmpty(subscriptionId))
                         {
                             _logger.LogWarning($"Notification subscriptionId is null");
@@ -219,8 +221,18 @@ namespace GraphNotifications.Functions
                         if (subscriptionId.ToLower() == "na")
                             continue;
 
+                        var decryptedContent = String.Empty;
+
+                        if(notification.EncryptedContent != null)
+                        {
+                            var encryptedContent = notification.EncryptedContent;
+                            decryptedContent = await encryptedContent.DecryptAsync((id, thumbprint) => {
+                                return _certificateService.GetDecryptionCertificate();
+                            });
+                        }
+
                         // A user can have multiple connections to the same resource / subscription. All need to be notified.
-                        await Clients.Group(subscriptionId).SendAsync("NewMessage", notification);
+                        await Clients.Group(subscriptionId).SendAsync("NewMessage", notification, decryptedContent);
                     }
                 }
                 catch (Exception e)

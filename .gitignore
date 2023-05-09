@@ -10,6 +10,15 @@
 *.userosscache
 *.sln.docstates
 
+#azurite
+__blobstorage__/*
+__azurite*
+
+# Configuration files with secrets only for local use
+local.settings.json
+main.parameters.json
+index.html
+
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
 

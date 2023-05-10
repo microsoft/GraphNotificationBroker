@@ -645,9 +645,14 @@
         viewNotificationButtonCell.appendChild(viewNotificationButton);
 
         row.appendChild(createElement('td', 'notificationData', JSON.stringify(notification)));
-        row.appendChild(createElement('td', 'notificationData', JSON.stringify(encryptedContent)));
-        if(encryptedContent != "")
+        if(encryptedContent) {
+          row.appendChild(createElement('td', 'notificationData', JSON.stringify(encryptedContent)));
           row.appendChild(createElement('td', 'notificationData', JSON.stringify(encryptedContent.body.content)));
+        }
+        else {
+          row.appendChild(createElement('td', 'notificationData', ''));
+          row.appendChild(createElement('td', 'notificationData', ''));
+        }
       }
 
       // Renders current subscriptions from the session, and allows the user

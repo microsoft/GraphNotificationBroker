@@ -88,37 +88,21 @@ sequenceDiagram
     autonumber
     participant User
     participant Client App
-    participant Azure Ad
     participant Azure SignalR Service
-    participant Azure Function (SignalR)
-    participant Azure Function (Http)
+    participant Azure Function (EH)
     participant Azure EventHub
     participant Microsoft Graph
     participant Teams Chat
     User->>Teams Chat: Create new chat messsage
     Teams Chat->>Microsoft Graph: Change Notification
     Microsoft Graph->>Azure EventHub: Sent Change Notification
-    Azure EventHub->>Azure Function (Http): Event Hub Message (Change Notification)
+    Azure EventHub->>Azure Function (EH): Event Hub Message (Change Notification)
     loop every notification
-        Azure Function (Http)->>Azure SignalR Service: Sent Notification to SignalGroup for subscription
-        Azure SignalR Service->>Client App: Sent notification
         alt Resource Data
-            Client App->>Azure Function (Http): Decrypt Encrypted Content
-            Azure Function (Http)->>Azure Function (Http): Validdate Token
-            alt Token Valid
-                Azure Function (Http)->>Azure Function (Http): Decrypt Content
-                Azure Function (Http)->>Client App: Return Decrypted Content
-            end
-            alt Token InValid
-                Azure Function (Http)->>Client App:Return 401
-            end
+            Azure Function (EH) ->> Azure Function (EH): Decrypt Content
         end
-        alt No Resource Data
-            Client App->>Microsoft Graph:Retrieve Resource Data
-            Microsoft Graph->>Client App: Resource Data
-            Azure Function (Http)->>Client App:Return Content
-        end 
-
+        Azure Function (EH)->>Azure SignalR Service: Sent Notification + Decrypted Content to SignalGroup for subscription
+        Azure SignalR Service->>Client App: Sent notification + Decrypted Content
         Client App->>Client App: Update UI
     end
 

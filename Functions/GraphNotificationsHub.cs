@@ -199,18 +199,19 @@ namespace GraphNotifications.Functions
                     // Deserializing to ChangeNotificationCollection throws an error when the validation requests
                     // are sent. Using a JObject to get around this issue.
                     var notificationsObj = Newtonsoft.Json.Linq.JObject.Parse(messageBody);
-                    var changeNotificationCollection = Newtonsoft.Json.JsonConvert.DeserializeObject<ChangeNotificationCollection>(messageBody);
+                    //var changeNotificationCollection = Newtonsoft.Json.JsonConvert.DeserializeObject<ChangeNotificationCollection>(messageBody);
 
-                    if (changeNotificationCollection?.Value == null)
+                    var notifications = notificationsObj["value"];
+                    if (notifications == null)
                     {
                         _logger.LogWarning($"No notifications found");;
                         return;
                     }
 
-                    foreach (var notification in changeNotificationCollection.Value)
+                    foreach (var notification in notifications)
                     {
 
-                        var subscriptionId = notification.SubscriptionId.ToString();
+                        var subscriptionId = notification["subscriptionId"]?.ToString();
                         if (string.IsNullOrEmpty(subscriptionId))
                         {
                             _logger.LogWarning($"Notification subscriptionId is null");
@@ -222,10 +223,10 @@ namespace GraphNotifications.Functions
                             continue;
 
                         var decryptedContent = String.Empty;
-
-                        if(notification.EncryptedContent != null)
+                        if(notification["encryptedContent"] != null)
                         {
-                            var encryptedContent = notification.EncryptedContent;
+                            var encryptedContentJson = notification["encryptedContent"]?.ToString();
+                            var encryptedContent = Newtonsoft.Json.JsonConvert.DeserializeObject<ChangeNotificationEncryptedContent>(encryptedContentJson) ;
                             decryptedContent = await encryptedContent.DecryptAsync((id, thumbprint) => {
                                 return _certificateService.GetDecryptionCertificate();
                             });

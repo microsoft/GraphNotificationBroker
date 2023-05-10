@@ -296,13 +296,20 @@
         // TODO: reconnect
       });
 
-      connection.on(ReturnMethods.NewMessage, async (notification) => {
+      connection.on(ReturnMethods.NewMessage, async (notification, decryptedContent) => {
           console.log('recevied new message');
-          var encryptedContent = '';
-          if (notification.encryptedContent) {
-            encryptedContent = await GetChatMessageFromNotification(notification);
+          let jsonDecryptedContent = null;
+
+          // If the notification encrypted content is not encrypted at server, decrypt it
+          if (notification.encryptedContent && !decryptedContent) {
+            jsonDecryptedContent = await GetChatMessageFromNotification(notification);
           }
-          await updatePage(Views.notifications, {notification: notification, encryptedContent: encryptedContent});
+          else {
+            // Else use the server decrypted content
+            jsonDecryptedContent = JSON.parse(decryptedContent);
+          }
+
+          await updatePage(Views.notifications, {notification: notification, encryptedContent: jsonDecryptedContent});
       });
 
       connection.on(ReturnMethods.SubscriptionCreated, async (subscriptionRecord) => {

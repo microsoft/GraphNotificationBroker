@@ -199,8 +199,6 @@ namespace GraphNotifications.Functions
                     // Deserializing to ChangeNotificationCollection throws an error when the validation requests
                     // are sent. Using a JObject to get around this issue.
                     var notificationsObj = Newtonsoft.Json.Linq.JObject.Parse(messageBody);
-                    //var changeNotificationCollection = Newtonsoft.Json.JsonConvert.DeserializeObject<ChangeNotificationCollection>(messageBody);
-
                     var notifications = notificationsObj["value"];
                     if (notifications == null)
                     {

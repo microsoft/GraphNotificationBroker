@@ -41,9 +41,6 @@ and exposes the notifications via SignalR connections.
 
 ## Client Applications
 
-Please refer to the the [Graph Notification Samples](https://github.com/microsoft/GraphNotificationSamples)
-repo for client application samples that consume the Graph Notification Broker.
-
 A sample Test Client application is included and deployed to the Azure Function and provided as an example.
 
 To run the test client use dotnet serve to host static files. Navigate to

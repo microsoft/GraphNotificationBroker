@@ -208,6 +208,7 @@ namespace GraphNotifications.Functions
 
                     foreach (var notification in notifications)
                     {
+
                         var subscriptionId = notification["subscriptionId"]?.ToString();
                         if (string.IsNullOrEmpty(subscriptionId))
                         {
@@ -219,8 +220,18 @@ namespace GraphNotifications.Functions
                         if (subscriptionId.ToLower() == "na")
                             continue;
 
+                        var decryptedContent = String.Empty;
+                        if(notification["encryptedContent"] != null)
+                        {
+                            var encryptedContentJson = notification["encryptedContent"]?.ToString();
+                            var encryptedContent = Newtonsoft.Json.JsonConvert.DeserializeObject<ChangeNotificationEncryptedContent>(encryptedContentJson) ;
+                            decryptedContent = await encryptedContent.DecryptAsync((id, thumbprint) => {
+                                return _certificateService.GetDecryptionCertificate();
+                            });
+                        }
+
                         // A user can have multiple connections to the same resource / subscription. All need to be notified.
-                        await Clients.Group(subscriptionId).SendAsync("NewMessage", notification);
+                        await Clients.Group(subscriptionId).SendAsync("NewMessage", notification, decryptedContent);
                     }
                 }
                 catch (Exception e)
